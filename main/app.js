@@ -1,7 +1,7 @@
 /*
  * @Author: your name
  * @Date: 2021-12-16 18:29:22
- * @LastEditTime: 2021-12-18 23:18:15
+ * @LastEditTime: 2021-12-27 19:44:02
  * @LastEditors: Please set LastEditors
  */
 (() => {
@@ -48,14 +48,15 @@
         if (bgUrl) $main.css("background-image", "url(" + bgUrl + ")");
         let inTime = null; //倒计时定时器
         var config = {
-                index: null, //进度索引[课程索引,模块索引,节点索引,子节点索引]
+                index: [0, 0, 0], //进度索引[课程索引,模块索引,节点索引,子节点索引]
                 nowDomOrVideo: 0, //当前是文档还是视频[0文档,1视频]
                 unIndex: 0, //未完成索引
+                runOut: null, //运行定时器
                 isRead: false, //是否为读取
                 isInit: false, //是否初始化
                 close: false, //是否关闭一次
                 tiemOut: null, //5分钟后重试定时器存放
-                speed: 2000, //执行速度
+                speed: 3000, //执行速度
                 ajaxSpeed: 2000, //ajax发送与内容添加速度
                 isPause: false, //是否暂停
                 errorNum: 0, //错误次数
@@ -66,10 +67,10 @@
                 Jump: 0 //是否跳过，1跳过文档，2跳过视频，其他不跳过
             },
             CourseList = null, //未完成课程对象树
-            unNodeList = null; //未完成子节点索引树
+            unNodeList = []; //未完成子节点索引树
         setTimeOut(() => {
-            Console("查询用户信息中。。。请稍后");
             userInit();
+            Console("查询用户信息中。。。请稍后");
             if (/token=.*^/.test(document.cookie)) {
                 alert("请登录后再执行该脚本！");
                 setTimeout(() => {
@@ -82,7 +83,7 @@
                 $c_left.find(".stuNum").text(localStorage.getItem("userName"));
                 Console(`[${name}]用户您好，欢迎━(*｀∀´*)ノ亻!使用本脚本，该脚本已更新为2.0版本`);
                 Console(`如在使用过程中出现BUG等情况,可反馈给作者<a href="tencent://message/?uin=2533094475&Site=admin5.com&Menu=yes">点我联系</a>`);
-                if(typeIndex)Console(`该脚本不支持做测验题,所以会出现课程未完成但没办法全部完成子节点情况，是因为跳过了测验题，建议手动完成测验题再执行该脚本或者忽视测验题`);
+                if (typeIndex) Console(`该脚本不支持做测验题,所以会出现课程未完成但没办法全部完成子节点情况，是因为跳过了测验题，建议手动完成测验题再执行该脚本或者忽视测验题`);
             }
         });
         class _script { //该类只关心返回什么样的数据
@@ -179,23 +180,27 @@
                 let list = res.cellList,
                     mId = CourseList[index].module[mIndex].id,
                     data = [],
-                    unNode = [];
-                list.forEach((e, i) => {
+                    unNode = [],
+                    unNum = null,
+                    i = 0;
+                list.forEach(e => {
                     if (e.childNodeList.length != 0) {
                         e.childNodeList.forEach(item => {
-                            let unNum = null;
+                            unNum = null;
                             this.filterType(item, () => {
                                 unNum = `${mIndex}-${tIndex}-${i}`;
                                 unNode.push(unNum);
                             }, true);
+                            i++;
                             data.push(this.filterCellData(item, mId, unNum));
                         });
                     } else {
-                        let unNum = null;
+                        unNum = null;
                         this.filterType(e, () => {
                             unNum = `${mIndex}-${tIndex}-${i}`;
                             unNode.push(unNum);
                         });
+                        i++;
                         data.push(this.filterCellData(e, mId, unNum));
                     }
                 });
@@ -296,17 +301,30 @@
         var $Script = new _script(typeIndex);
         async function getCourseLists() {
             try {
+                if (config.isRead && CourseList.length != 0) {
+                    let data = await $Script.getCourseLists();
+                    if (data.list.length != CourseList.length) {
+                        Console("课程有变动，重新更新课程。。。");
+                        let arr = [];
+                        f: for (const r of data.list) {
+                            for (const e of CourseList) {
+                                if (e.openId == r.openId) continue f;
+                            }
+                            arr.push(r);
+                        }
+                        CourseList.push(...arr);
+                    }
+                }
                 config.pauseNode = "getCourseLists";
                 if (CourseList.length != 0) {
                     if (!config.isInit) { CourseListInit() } else {
-                        if (config.isRead === false) filterIndex(0, CourseList.length);
                         setTimeOut(getModuleLists);
                     }
                 } else {
                     Console('正在获取课程列表中...');
                     let data = await $Script.getCourseLists();
                     CourseList = data.list;
-                    updataData("c");
+                    updataData();
                     if (CourseList.length == 0) {
                         setTimeOut(Console("所有课程均完成，感谢您的使用😉"));
                         setTimeout(() => {
@@ -332,6 +350,7 @@
                 Console(`正在载入未完成课程,请稍后。。。`);
                 $couresMenu.append(getCourseDom());
                 config.isInit = true;
+                config.isRead = false;
             }).then(r => {
                 setTimeOut(() => {
                     $menubar.children("[data-type=change]").removeClass("loader");
@@ -353,14 +372,13 @@
         async function getModuleLists() {
             let index = config.index[0];
             try {
-                config.isRead = false;
                 if (config.close) config.close = false;
                 config.pauseNode = "getModuleLists";
                 Console(`当前课程名称${CourseList[index].name}`);
                 if (CourseList[index].module.length == 0) {
                     let data = await $Script.getModuleLists();
                     CourseList[index].module = data.module;
-                    updataData("c");
+                    updataData();
                     let len = data.info.len,
                         unlen = data.info.unlen;
                     await setTimeOut(() => {
@@ -393,7 +411,7 @@
                         let res = await $Script.getNodeLists();
                         CourseList[i].module[index].topic = res;
                         config.index[1] = ++index;
-                        updataData("c");
+                        updataData();
                         Console(`获取模块节点进度${index}/${len}`);
                     } else {
                         config.index[1] = ++index;
@@ -420,18 +438,25 @@
                 Console(`准备获取模块子节点信息...`);
                 let mL = CourseList[i].module.length;
                 while (mI < mL) {
+                    if (config.close) break;
                     let tL = CourseList[i].module[mI].topic.length;
                     while (tI < tL) {
-                        if (config.close) break;
-                        if (CourseList[i].module[mI].topic[tI].Nodes.length == 0) {
-                            if (config.close) break;
+                        let node = CourseList[i].module[mI].topic[tI].Nodes;
+                        if (node != null && node.length == 0) {
                             let res = await $Script.getChildNodeLists();
-                            CourseList[i].module[mI].topic[tI].Nodes = res.data;
+                            if (config.close) break;
+                            CourseList[i].module[mI].topic[tI].Nodes = res.data.length == 0 ? null : res.data;
                             unNodeList.push(...res.unNode);
                             config.index[2] = ++tI;
-                            updataData("c-u");
+                            updataData();
                             Console(`获取模块子节点进度[${mL}/${mI + 1}]->[${tL}/${tI}]`);
+                            config.errorNum = 0;
                         } else {
+                            if (node != null) {
+                                node.forEach(r => {
+                                    if (r.unNum) unNodeList.push(r.unNum);
+                                })
+                            }
                             config.index[2] = ++tI;
                             Console(`读取模块子节点进度[${mL}/${mI + 1}]->[${tL}/${tI}]`);
                         }
@@ -491,17 +516,21 @@
                         if (config.close) continue;
                         $jumpThis.removeClass("loader");
                         if (res.cellPercent != 100) {
-                            if (await SetProgress(res, node) != 0) {
-                                CourseList[config.index[0]].module[arr[0]].topic[arr[1]].Nodes[arr[2]].unNum = null;
-                                $(".view-3[data-un=" + v + "]").addClass("isOk");
-                            } else {
-                                config.isInit ? config.unIndex++ : config.isInit = false;
+                            let datas = await SetProgress(res, node);
+                            if (datas === 0) {
                                 updata = false;
+                            } else if (datas === 1) {
+                                updata = false;
+                                config.unIndex++;
                             }
-                        } else { Console("本小节已完成！") };
+                        } else {
+                            Console("本小节已完成！");
+                        };
                         if (updata) {
+                            CourseList[config.index[0]].module[arr[0]].topic[arr[1]].Nodes[arr[2]].unNum = null;
+                            $(".view-3[data-un=" + v + "]").addClass("isOk");
                             unNodeList.splice(config.unIndex, 1);
-                            updataData("c-u");
+                            updataData();
                         }
                         $jumpThis.addClass("loader");
                         if (config.unIndex >= unNodeList.length) config.unIndex = 0;
@@ -509,12 +538,13 @@
                         Console(JumpTxt);
                     }
                 }
+                if (config.close) return;
                 Console(`当前课程已成功完成`);
                 configInit(3);
                 CourseList.splice(config.index[0], 1);
                 $couresMenu.children().eq(config.index[0]).remove();
                 config.index[0] >= CourseList.length ? config.index[0] = 0 : "";
-                updataData("i-c-u");
+                updataData();
                 setTimeOut(() => {
                     if (CourseList.length != 0) {
                         Console("准备进入下一个课程。。。");
@@ -529,21 +559,9 @@
             }
         }
         async function SetProgress(res, node) {
-            if (typeof res != "object" || typeof node != "object") return Promise.reject("参数违法！调用失败");
             try {
                 if (res.code == -100) {
-                    let date = await _ajax($Script.url.nodeDataChange, {
-                        courseOpenId: res.currCourseOpenId,
-                        openClassId: res.currOpenClassId,
-                        moduleId: res.currModuleId,
-                        cellId: res.curCellId,
-                        cellName: res.currCellName,
-                    });
-                    if (date.code == 1) {
-                        res = await $Script.getChildNodeInfo(node);
-                    } else {
-                        throw 0;
-                    }
+                    res = await getNodeDataChange(res, node);
                 }
                 let obj = $Script.filterNeedData(res),
                     len = obj.info.is ? obj.info.TimeLong : obj.info.pageCount,
@@ -577,22 +595,31 @@
                             request = await _ajax($Script.url.setProgress, obj.data);
                             if (request.code >= 1) {
                                 Console(`操作成功,本节进度${i}/${sum}`);
+                                config.errorNum = 0;
                             } else {
-                                Console(`修改失败！错误码为${request.code},错误信息${request.msg}`);
-                                Console(`正在恢复默认速度,并进行重试`);
-                                $("#video-set").val(config.ajaxSpeed = (config.videoRequestSpeed = 10000) / 1000);
-                                $("#video-time-set").val(config.videoAddSpeed = 15);
-                                config.errorNum++;
-                                if (config.errorNum > 3) {
-                                    Console(`连续异常3次已暂停,如有重复异常过多,可刷新页面重新运行该脚本`);
-                                    $run.click();
-                                    throw 0;
+                                if (request.code == -100) {
+                                    await getNodeDataChange(request);
+                                    request = await _ajax($Script.url.setProgress, obj.data);
+                                    Console(`操作成功,本节进度${i}/${sum}`);
+                                } else {
+                                    Console(`修改失败！错误码为${request.code},错误信息${request.msg}`);
+                                    Console(`正在恢复默认速度,并进行重试`);
+                                    $("#video-set").val((config.ajaxSpeed = config.videoRequestSpeed = 10000) / 1000);
+                                    $("#video-time-set").val(config.videoAddSpeed = 15);
+                                    config.errorNum++;
+                                    time -= sp;
+                                    i--;
+                                    if (config.errorNum > 3) {
+                                        Console(`连续异常3次已暂停,如有重复异常过多,可刷新页面重新运行该脚本`);
+                                        $run.click();
+                                    }
                                 }
+
                             }
                         }
                     }
                 }
-                if (/刷课|禁/.test(request.msg)) {
+                if (request && request.msg && /刷课|禁/.test(request.msg)) {
                     Console(`账户疑似异常，已终止执行`);
                     $run.click();
                 }
@@ -601,7 +628,30 @@
                 config.errorNum = 0;
                 config.ajaxSpeed = config.speed;
             } catch (e) {
-                setError(e);
+                if (!config.close) {
+                    Console(`获取异常,返回[状态码:${e.status},错误信息${e.statusText}]`);
+                    config.errorNum++;
+                }
+                if (config.errorNum > 3) {
+                    Console(`当前节点可能异常,暂时跳过`);
+                    return 1
+                } else {
+                    return 0
+                }
+            }
+        }
+        async function getNodeDataChange(res, node) {
+            let date = await _ajax($Script.url.nodeDataChange, {
+                courseOpenId: res.currCourseOpenId,
+                openClassId: res.currOpenClassId,
+                moduleId: res.currModuleId,
+                cellId: res.curCellId,
+                cellName: res.currCellName,
+            });
+            if (date.code == 1) {
+                return await $Script.getChildNodeInfo(node);
+            } else {
+                return Promise.reject(0);
             }
         }
         $l_btn.click(function() {
@@ -631,15 +681,15 @@
             if ($ch_btn.is(".onck")) $ch_btn.click();
             if ($(this).attr("now") == undefined) {
                 $(this).attr("now", "").siblings("div[now]").removeAttr("now");
-                config.index[0] = +$(this).index();
+                let i = +$(this).index();
+                config.index = [i, 0, 0];
+                unNodeList = [];
                 config.isPause = config.close = true;
-                if (config.pauseNode == "getChildNodeInfo") config.close = true;
                 setTimeout(() => {
-                    config.isRead = true;
                     config.isPause = config.close = false;
                     config.ajaxSpeed = config.speed;
                     getCourseLists();
-                }, config.ajaxSpeed);
+                }, config.ajaxSpeed + 1000);
             }
         });
         $couresView.on("click", "li", function() {
@@ -652,7 +702,6 @@
                         $couresView.attr("load", "");
                         config.ajaxSpeed = config.speed;
                         config.unIndex = unNodeList.indexOf($(this).data("un"));
-                        config.isInit = true;
                         config.close = true;
                         setTimeout(() => {
                             $couresView.removeAttr("load");
@@ -670,16 +719,24 @@
                 $(this).attr("type", "paused");
                 $(this).text("暂停");
                 config.isPause = config.close = false;
+                if (config.runOut != null) {
+                    clearTimeout(config.runOut);
+                    config.runOut = null;
+                }
                 if (config.pauseNode) {
                     Console("已启动脚本运行");
                     eval(config.pauseNode + "()");
                 } else {
+                    Console("获取课程信息中...");
                     getCourseLists();
                 }
             } else {
                 $(this).removeAttr("type", "paused");
                 $(this).text("运行");
                 config.isPause = config.close = true;
+                config.runOut = setTimeout(() => {
+                    if ($(this).attr("type") == "paused") $run.click();
+                }, 60000)
                 setTimeOut(() => { Console("已暂停脚本运行") });
             }
         });
@@ -788,6 +845,10 @@
                         on = false;
                         config.close = true;
                         config.unIndex++;
+                        $(this).addClass("loader");
+                        setTimeout(() => {
+                            Console(`已跳过当前子节点`);
+                        }, config.ajaxSpeed - 1000);
                         setTimeout(() => {
                             Console(`已跳过当前子节点`);
                             config.ajaxSpeed = config.speed;
@@ -833,12 +894,14 @@
                     <div class="view-wrap">
                     <ul class="view-item" data-v=3>
                     `;
-                    for (const r of e.Nodes) {
-                        html += `
+                    if (e.Nodes != null) {
+                        for (const r of e.Nodes) {
+                            html += `
                         <li class="view-3 ${r.unNum ? "" : "isOk"}" data-un=${r.unNum} >
                         <b>${r.type}</b>
                         <span>${r.name}</span>
                         </li>`;
+                        }
                     }
                     html += "</ul></div></ul>";
                 }
@@ -863,24 +926,23 @@
         }
 
         function userInit() {
-            let id = localStorage.getItem("userName");
+            let id = localStorage.getItem("userName") + "_v.2";
             if (localStorage.getItem("scriptID") !== id) {
                 localStorage.setItem("scriptID", id);
                 Console("对运行环境数据初始化中。。。");
+                if (localStorage.getItem("s_courseList")) localStorage.removeItem("s_courseList");
+                if (localStorage.getItem("s_unNodeList")) localStorage.removeItem("s_unNodeList");
                 config.isRead = false;
-                config.index = [0, 0, 0, 0];
-                CourseList = unNodeList = [];
+                CourseList = [];
             } else {
-                config.index = JSON.parse(localStorage.getItem("s_index")) || [0, 0, 0, 0];
                 CourseList = JSON.parse(localStorage.getItem("s_courseList")) || [];
-                unNodeList = JSON.parse(localStorage.getItem("s_unNodeList")) || [];
                 config.isRead = true;
             }
         }
 
-        function filterIndex(index, len) {
-            if (index > 3 || index < 0) index = 0;
-            config.index[index] >= --len ? config.index[index] = len : config.index[index]++;
+        function filterIndex() {
+            let len = CourseList.length;
+            config.index[0] >= --len ? config.index[0] = len : config.index[0]++;
         }
 
         function setTimeOut(fn) {
@@ -891,21 +953,8 @@
             })
         }
 
-        function updataData(str) {
-            str = str.split("-");
-            for (const v of str) {
-                switch (v) {
-                    case "i":
-                        localStorage.setItem('s_index', JSON.stringify(config.index));
-                        break;
-                    case "c":
-                        localStorage.setItem('s_courseList', JSON.stringify(CourseList));
-                        break;
-                    case "u":
-                        localStorage.setItem('s_unNodeList', JSON.stringify(unNodeList));
-                        break;
-                }
-            }
+        function updataData() {
+            localStorage.setItem('s_courseList', JSON.stringify(CourseList));
         }
 
         function setError(e) {
@@ -917,12 +966,11 @@
                         Console(`失败次数过多，1分钟后将尝试重新执行`);
                         Console(`失败原因可能为[登录状态失效，网络异常，账户信息异常]，建议刷新本页面成功后再重新执行该脚本`);
                         $run.click();
-                        config.tiemOut = setTimeout(() => {
+                        setTimeout(() => {
                             Console(`正在尝试重新执行`);
                             $run.attr("type", "paused");
                             $run.text("暂停");
                             config.isPause = false;
-                            --config.index[0];
                             getCourseLists();
                         }, 60000);
                     } else {
@@ -1002,7 +1050,7 @@
             margin: 20px auto;border-radius: 5px;object-fit: cover}
         .left-item {position: relative;margin: .5rem 0;text-align: center}
         .left-item>span,.menu-item>span {display: block}
-        .text-ellipsis {padding: .5rem;overflow: hidden;text-overflow: ellipsis;white-space: nowrap}
+        .text-ellipsis {padding: .5rem}
         #hcq-main {position: relative;flex: 1;display: flex;justify-content: center;align-items: center;
             background-size: cover;background-position: center}
         #hcq-main>div {position: absolute;display: none;flex-shrink: 0;width: 90%;height: 90%;
@@ -1011,9 +1059,8 @@
         #hcq-main>div.flex.show {display: flex}
         #hcq-main>#console-info {overflow: auto;background-color: rgba(255, 255, 255, .75);scroll-behavior: smooth}
         .info-box>span {display: block;border-bottom: 1px dashed #2ECD71}
-        #console-info>.coures-menu {position: absolute;display: flex;flex-wrap: wrap;align-content: flex-start;
-            top: 0;width: 100%;height: 100%;overflow-y: auto;background-color: #ccc}
-        .coures-menu>.menu-box {position: relative;display: flex;justify-content: center;width: 20%}
+        .coures-menu {overflow-y: auto;}
+        .coures-menu>.menu-box {position: relative;display: flex;width: 20%;justify-content: center;float: left}
         .menu-box>div {position: relative;width: 120px;height: 140px;flex-shrink: 0;margin: .5rem;
             border-radius: 5px;background-color: rgb(114, 93, 233);box-shadow: 0 0 5px #666;color: #fff}
         .menu-box>div>div {position: absolute;width: 2rem;height: 2rem;border-radius: 50%;right: 0;background-color: #0aec6960}
@@ -1176,7 +1223,7 @@
             <div class="menu-item">
                 <span>请求发送速度</span>
                 <div>
-                    [<input type="text" placeholder="1-4" data-default="2" id="ajax-set" value="2">秒修改一次]
+                    [<input type="text" placeholder="1-4" data-default="3" id="ajax-set" value="3">秒修改一次]
                 </div>
             </div>
             <div class="menu-item">
